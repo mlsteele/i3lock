@@ -79,6 +79,8 @@ cairo_surface_t *img = NULL;
 bool tile = false;
 bool ignore_empty_password = false;
 bool skip_repeated_empty_password = false;
+/* Whether the user pressed submit at a time when it couldn't be processed yet. */
+bool submit_queued = false;
 
 /* isutf, u8_dec © 2005 Jeff Bezanson, public domain */
 #define isutf(c) (((c)&0xC0) != 0x80)
@@ -193,6 +195,8 @@ ev_timer *stop_timer(ev_timer *timer_obj) {
     return NULL;
 }
 
+static void input_done(void);
+
 /*
  * Resets pam_state to STATE_PAM_IDLE 2 seconds after an unsuccessful
  * authentication event.
@@ -211,6 +215,11 @@ static void clear_pam_wrong(EV_P_ ev_timer *w, int revents) {
 
     /* Now free this timeout. */
     STOP_TIMER(clear_pam_wrong_timeout);
+
+    if (submit_queued && input_position > 0) {
+        password[input_position] = '\0';
+        input_done();
+    }
 }
 
 static void clear_indicator_cb(EV_P_ ev_timer *w, int revents) {
@@ -230,6 +239,7 @@ static void discard_passwd_cb(EV_P_ ev_timer *w, int revents) {
 }
 
 static void input_done(void) {
+    submit_queued = false;
     STOP_TIMER(clear_pam_wrong_timeout);
     pam_state = STATE_PAM_VERIFY;
     unlock_state = STATE_STARTED;
@@ -370,9 +380,10 @@ static void handle_key_press(xcb_key_press_event_t *event) {
         case XKB_KEY_Return:
         case XKB_KEY_KP_Enter:
         case XKB_KEY_XF86ScreenSaver:
-            if (pam_state == STATE_PAM_WRONG)
+            if (pam_state == STATE_PAM_WRONG) {
+                submit_queued = true;
                 return;
-
+            }
             if (skip_without_validation()) {
                 clear_input();
                 return;

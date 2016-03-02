@@ -21,6 +21,8 @@ i3lock \- improved screen locker
 .RB [\|\-d\|]
 .RB [\|\-i
 .IR image.png \|]
+.RB [\|\-s
+.IR staticpwd.txt \|]
 .RB [\|\-c
 .IR color \|]
 .RB [\|\-t\|]
@@ -87,6 +89,13 @@ verified or whether it is wrong).
 .TP
 .BI \-i\  path \fR,\ \fB\-\-image= path
 Display the given PNG image instead of a blank screen.
+
+.TP
+.BI \-s\  path \fR,\ \fB\-\-static-password= path
+Use a static password stored in the file instead of PAM.
+The path should point to a file whose first line is the password to use.
+This is a password in a plain text option, in other words a BAD IDEA.
+Only use this for a quick way to keep your friends out, NOT as a strong security measure.
 
 .TP
 .BI \-c\  rrggbb \fR,\ \fB\-\-color= rrggbb

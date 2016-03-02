@@ -61,11 +61,16 @@ static pam_handle_t *pam_handle;
 int input_position = 0;
 /* Holds the password you enter (in UTF-8). */
 static char password[512];
+/* Holds the static password if enabled. */
+static char static_password[512];
 static bool beep = false;
 bool debug_mode = false;
 static bool dpms = false;
 bool unlock_indicator = true;
 static bool dont_fork = false;
+#define AUTH_MODE_PAM 0
+#define AUTH_MODE_CUSTOM 1
+static int auth_mode = AUTH_MODE_PAM;
 struct ev_loop *main_loop;
 static struct ev_timer *clear_pam_wrong_timeout;
 static struct ev_timer *clear_indicator_timeout;
@@ -232,12 +237,33 @@ static void discard_passwd_cb(EV_P_ ev_timer *w, int revents) {
     STOP_TIMER(discard_passwd_timeout);
 }
 
+static bool run_auth_check(void) {
+    if (auth_mode == AUTH_MODE_PAM) {
+        return pam_authenticate(pam_handle, 0) == PAM_SUCCESS;
+    } else if (auth_mode == AUTH_MODE_CUSTOM) {
+        size_t s1 = sizeof(password);
+        size_t s2 = sizeof(static_password);
+        size_t s = s1 > s2 ? s2 : s1;
+        bool ok = strncmp(password, static_password, s) == 0;
+        if (ok) {
+            return true;
+        } else {
+            nanosleep((const struct timespec[]){{0, 500000000L}}, NULL);
+            return false;
+        }
+    } else {
+        DEBUG("Invalid auth mode. This should _never_ happen.\n");
+        // This exit will unlock the screen.
+        exit(1);
+    }
+}
+
 static void input_done(void) {
     STOP_TIMER(clear_pam_wrong_timeout);
     pam_state = STATE_PAM_VERIFY;
     redraw_screen();
 
-    if (pam_authenticate(pam_handle, 0) == PAM_SUCCESS) {
+    if (run_auth_check()) {
         DEBUG("successfully authenticated\n");
         clear_password_memory();
         /* Turn the screen on, as it may have been turned off
@@ -257,7 +283,7 @@ static void input_done(void) {
     /* Clear this state after 2 seconds (unless the user enters another
      * password during that time). */
     ev_now_update(main_loop);
-    START_TIMER(clear_pam_wrong_timeout, TSTAMP_N_SECS(2), clear_pam_wrong);
+    START_TIMER(clear_pam_wrong_timeout, TSTAMP_N_SECS(1), clear_pam_wrong);
 
     /* Cancel the clear_indicator_timeout, it would hide the unlock indicator
      * too early. */
@@ -682,9 +708,33 @@ int verify_hex(char *arg, char *colortype, char *varname) {
     return 1;
 }
 
+// Returns whether reading succeeded.
+bool read_password_from_file(char *path, char *buf, size_t bufsize) {
+    FILE *fp = NULL;
+    fp = fopen(path, "r");
+    if (!fp) {
+        return false;
+    }
+    char *wtf = fgets(buf, bufsize, fp);
+    if (!wtf) {
+        return false;
+    }
+    if (fclose(fp) != 0) {
+        return false;
+    }
+    for (int i = 0; i < bufsize; i++) {
+        if (buf[i] == '\n') {
+            buf[i] = '\0';
+        }
+    }
+    fprintf(stderr, "Using password '%s'\n", buf);
+    return true;
+}
+
 int main(int argc, char *argv[]) {
     char *username;
     char *image_path = NULL;
+    char *static_password_path = NULL;
     int ret;
     struct pam_conv conv = {conv_callback, NULL};
     int curs_choice = CURS_NONE;
@@ -701,6 +751,7 @@ int main(int argc, char *argv[]) {
         {"help", no_argument, NULL, 'h'},
         {"no-unlock-indicator", no_argument, NULL, 'u'},
         {"image", required_argument, NULL, 'i'},
+        {"static-password", required_argument, NULL, 's'},
         {"tiling", no_argument, NULL, 't'},
         {"ignore-empty-password", no_argument, NULL, 'e'},
         {"inactivity-timeout", required_argument, NULL, 'I'},
@@ -715,10 +766,12 @@ int main(int argc, char *argv[]) {
     if ((username = getenv("USER")) == NULL)
         errx(EXIT_FAILURE, "USER environment variable not set, please set it.\n");
 
-    char *optstring = "hvnbdc:o:w:l:p:ui:teI:f";
+    char *optstring = "hvnbdc:o:w:l:p:ui:s:teI:f";
     while ((o = getopt_long(argc, argv, optstring, longopts, &optind)) != -1) {
         switch (o) {
         case 'v':
+
+
             errx(EXIT_SUCCESS, "version " VERSION " © 2010-2012 Michael Stapelberg");
         case 'n':
             dont_fork = true;
@@ -757,6 +810,9 @@ int main(int argc, char *argv[]) {
         case 'i':
             image_path = strdup(optarg);
             break;
+        case 's':
+            static_password_path = strdup(optarg);
+            break;
         case 't':
             tile = true;
             break;
@@ -781,7 +837,7 @@ int main(int argc, char *argv[]) {
             break;
         default:
             errx(EXIT_FAILURE, "Syntax: i3lock [-v] [-n] [-b] [-d] [-c color] [-o color] [-w color] [-l color] [-u] [-p win|default]"
-            " [-i image.png] [-t] [-e] [-I] [-f] [--24]"
+            " [-i image.png] [-s pwdfile] [-t] [-e] [-I] [-f] [--24]"
             );
         }
     }
@@ -884,6 +940,17 @@ int main(int argc, char *argv[]) {
                     image_path, cairo_status_to_string(cairo_surface_status(img)));
             img = NULL;
         }
+    }
+
+    if (static_password_path) {
+        if (read_password_from_file(static_password_path, static_password, sizeof(static_password_path))) {
+            auth_mode = AUTH_MODE_CUSTOM;
+        } else {
+            fprintf(stderr, "Could not load password from \"%s\"\n", static_password_path);
+            exit(1);
+        }
+    } else {
+        auth_mode = AUTH_MODE_PAM;
     }
 
     /* Pixmap on which the image is rendered to (if any) */

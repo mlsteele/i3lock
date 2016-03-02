@@ -670,15 +670,15 @@ static void raise_loop(xcb_window_t window) {
 int verify_hex(char *arg, char *colortype, char *varname) {
     /* Skip # if present */
     if (arg[0] == '#') {
-        arg++;  
+        arg++;
     }
-        
+
     if (strlen(arg) != 6 || sscanf(arg, "%06[0-9a-fA-F]", colortype) != 1) {
         errx(EXIT_FAILURE, "%s is invalid, it must be given in 3-byte hexadecimal format: rrggbb\n", varname);
 
         return 0;
     }
-        
+
     return 1;
 }
 
@@ -736,7 +736,7 @@ int main(int argc, char *argv[]) {
             inactivity_timeout = time;
             break;
         }
-        case 'c': 
+        case 'c':
             verify_hex(optarg,color, "color");
             break;
         case 'o':
